@@ -1,0 +1,11 @@
+--- /opt/zimbra/bin/zmcontrol.bak       2012-07-30 14:42:24.112265833 +0700
++++ /opt/zimbra/bin/zmcontrol   2012-07-28 14:03:26.461985874 +0700
+@@ -203,7 +203,7 @@
+                $rc = $rc >> 8;
+                if ($rc) {
+       # this is an any ugly hack for 11266
+-      $status = 1 if ($serviceStatusList{$_});
++      $status = 3 if ($serviceStatusList{$_});
+         
+                }
+                my $stat = sprintf "\t%-20s %10s\n",$_,($rc)?"Stopped":"Running";

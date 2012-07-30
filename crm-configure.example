@@ -1,0 +1,39 @@
+node node1
+node node2
+primitive MyCrond lsb:crond \
+        op monitor interval="60s"
+primitive Zimbra lsb:zimbra \
+        op monitor interval="0" timeout="5min" \
+        op start interval="0" timeout="5min" \
+        op stop interval="0" timeout="5min" \
+        meta target-role="Started"
+primitive ZimbraData ocf:linbit:drbd \
+        params drbd_resource="zimbradata" \
+        op monitor interval="60s"
+primitive ZimbraFS ocf:heartbeat:Filesystem \
+        params device="/dev/drbd2" directory="/opt" fstype="ext4" \
+        meta target-role="Started"
+primitive ZimbraIP ocf:heartbeat:IPaddr2 \
+        params ip="192.168.10.240" cidr_netmask="24" \
+        op monitor interval="30s" \
+        meta target-role="Started"
+ms ZimbraDataClone ZimbraData \
+        meta master-max="1" master-node-max="1" clone-max="2" clone-node-max="1" notify="true" target-role="Started"
+colocation Zimbra-with-MyCrond inf: Zimbra MyCrond
+colocation Zimbra-with-ZimbraFS inf: Zimbra ZimbraFS
+colocation Zimbra-with-ZimbraIP inf: Zimbra ZimbraIP
+colocation fs_on_drbd2 inf: ZimbraFS ZimbraDataClone:Master
+order Zimbra-after-ZimbraFS inf: ZimbraFS Zimbra
+order ZimbraFS-after-ZimbraData inf: ZimbraDataClone:promote ZimbraFS:start
+order zimbra-after-ip inf: ZimbraIP Zimbra
+property $id="cib-bootstrap-options" \
+        dc-version="1.1.7-6.el6-148fccfd5985c5590cc601123c6c16e966b85d14" \
+        cluster-infrastructure="openais" \
+        expected-quorum-votes="4" \
+        stonith-enabled="false" \
+        no-quorum-policy="ignore" \
+        last-lrm-refresh="1343616686"
+rsc_defaults $id="rsc-options" \
+        resource-stickiness="100"
+op_defaults $id="op-options" \
+        timeout="240s"

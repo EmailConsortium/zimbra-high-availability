@@ -1,0 +1,22 @@
+resource zimbradata {
+        meta-disk internal;
+        device /dev/drbd2;
+
+        syncer {
+                verify-alg sha1;
+        }
+
+        net {
+                allow-two-primaries;
+        }
+
+        on node1 {
+                disk /dev/mapper/vg_node1-zimbradata;
+                address 192.168.10.232:7789;
+        }
+
+        on node2 {
+                disk /dev/mapper/vg_node2-zimbradata;
+                address 192.168.10.233:7789;
+        }
+}

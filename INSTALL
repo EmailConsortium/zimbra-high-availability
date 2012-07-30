@@ -1,0 +1,24 @@
+zimbra-high-availability
+========================
+
+Zimbra High Availability (Cluster) with CoroSync+Pacemaker+DRBD
+
+Bước 1: cài đặt Cluster
+- Cài đặt, cấu hình một Active/Passive Cluster theo hướng dẫn trong Cluster from Scratch (tạm bỏ qua resource Zimbra và các cấu hình liên quan - sẽ thực hiện trong bước 5). Tham khảo file cấu hình Cluster mẫu crm-configure.example
+
+Bước 2: cài đặt DRBD
+- Cài đặt, cấu hình DRBD cho Zimbra với LVM partition riêng. Tham khảo file cấu hình DRBD resource mẫu zimbradata.res.example.
+
+Bước 3: cài đặt Zimbra
+- Sau khi start cluster resource sẵn sàng cho Zimbra (ZimbraIP, ZimbraFS và ZimbraDataClone), FloatingIP và mount point dùng riêng cho Zimbra được kích hoạt trên node1.
+- Cài đặt Zimbra bình thường trên node1, cấu hình Zimbra với hostname trỏ đến ZimbraIP.
+- Cài đặt Zimbra trên node2 với cấu hình tùy ý (chủ yếu là để các Zimbra files được cài đặt đầy đủ)
+
+Bước 4: chỉnh sửa Zimbra init script để đảm bảo tương tích LSB (Linux Standard Base)
+- Chỉnh sửa /etc/init.d/zimbra (tham khảo các thay đổi trong zimbra-init-script.patch)
+- Chỉnh sửa /opt/zimbra/bin/zmcontrol (tham khảo các thay đổi trong zmcontrol.patch)
+
+Bước 5: cấu hình Zimbra Services trên Cluster
+- Hoàn chỉnh cấu hình Zimbra Cluster với resource Zimbra và các cấu hình liên quan. Tham khảo file cấu hình Cluster mẫu crm-configure.example
+
+Tài liệu được phát hành theo giấy phép Creative Commons Attribution-ShareAlike 3.0 Unported License (http://creativecommons.org/licenses/by-sa/3.0/)
