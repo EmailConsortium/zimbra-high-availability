@@ -1,0 +1,621 @@
+#!/usr/bin/perl
+# 
+# ***** BEGIN LICENSE BLOCK *****
+# Zimbra Collaboration Suite Server
+# Copyright (C) 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2011, 2012, 2013, 2014 Zimbra, Inc.
+# 
+# This program is free software: you can redistribute it and/or modify it under
+# the terms of the GNU General Public License as published by the Free Software Foundation,
+# version 2 of the License.
+# 
+# This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+# without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+# See the GNU General Public License for more details.
+# You should have received a copy of the GNU General Public License along with this program.
+# If not, see <http://www.gnu.org/licenses/>.
+# ***** END LICENSE BLOCK *****
+# 
+
+use strict;
+
+my $id = qx(id -u -n);
+chomp $id;
+if ($id ne "zimbra") {die "Run as the zimbra user!\n";}
+
+use lib "/opt/zimbra/zimbramon/lib";
+use Zimbra::Util::Common;
+use Zimbra::Mon::Logger;
+use Net::LDAP;
+
+use Getopt::Std;
+use File::Temp qw/ tempfile /;
+use File::Path;
+
+my $zimbra_tmp_directory=getLocalConfig("zimbra_tmp_directory");
+
+if ( !-d $zimbra_tmp_directory ) {
+  File::Path::mkpath("$zimbra_tmp_directory");
+}
+
+my (undef, $zmcontrolLogfile) = tempfile("zmcontrol.out.XXXXX", DIR=>"$zimbra_tmp_directory",  OPEN=>0);
+
+my $timeout = 180;
+$SIG{ALRM} = sub { print "Timeout after $timeout seconds\n"; exit(1) };
+my $now = time();
+my $cache_file = "/opt/zimbra/log/.zmcontrol.cache";
+my $localHostName = getHostName();
+my $ldapHere = isLdapLocal();
+my $services;
+my %devicesChecked;
+my %serviceStatusList;
+my %startorder = ( 
+	"ldap" 		=> 0,
+	"zmconfigd"	=> 10,
+	"dnscache"	=> 20,
+	"logger" 	=> 30,
+	"convertd"	=> 40,
+	"mailbox" 	=> 50,
+	"memcached"	=> 60,
+	"proxy"		=> 70,
+	"amavis"	=> 75,
+	"antispam" 	=> 80,
+	"antivirus"	=> 90,
+	"opendkim"	=> 100,
+	"archiving"	=> 110,
+	"cbpolicyd"	=> 120,
+	"snmp" 		=> 130,
+	"spell" 	=> 140,
+	"mta" 		=> 150,
+	"stats"		=> 160,
+	"service"	=> 170,
+	"zimbra"	=> 180,
+	"zimbraAdmin"	=> 190,
+	"zimlet"	=> 200,
+	"vmware-ha"	=> 250,  # this should remain last
+);
+
+my %stoporder = ( 
+	"ldap" 		=> 0,
+	"dnscache"	=> 10,
+	"logger" 	=> 20,
+	"convertd"	=> 30,
+	"mailbox" 	=> 40,
+	"memcached"	=> 50,
+	"proxy"		=> 60,
+	"antispam" 	=> 70,
+	"antivirus"	=> 80,
+	"amavis"	=> 85,
+	"opendkim"	=> 90,
+	"archiving"	=> 100,
+	"cbpolicyd"	=> 110,
+	"snmp" 		=> 120,
+	"spell" 	=> 130,
+	"mta" 		=> 140,
+	"stats"		=> 150,
+	"service"	=> 160,
+	"zimbra"	=> 170,
+	"zimbraAdmin"	=> 180,
+	"zimlet"	=> 190,
+	"zmconfigd"	=> 200,
+	"vmware-ha"	=> 250,
+);
+
+my %allservices = ( 
+	"amavis" => "/opt/zimbra/bin/zmamavisdctl",
+	"antivirus" => "/opt/zimbra/bin/zmantivirusctl", 
+	"antispam" => "/opt/zimbra/bin/zmantispamctl", 
+	"archiving" => "/opt/zimbra/bin/zmarchivectl",
+	"dnscache" => "/opt/zimbra/bin/zmdnscachectl",
+	"opendkim" => "/opt/zimbra/bin/zmopendkimctl",
+	"convertd" => "/opt/zimbra/bin/zmconvertctl",
+	"mta" => "/opt/zimbra/bin/zmmtactl", 
+	"mailbox" => "/opt/zimbra/bin/zmstorectl",
+	"service" => "/opt/zimbra/bin/zmstorectl",
+	"zimbra" => "/opt/zimbra/bin/zmstorectl",
+	"zimbraAdmin" => "/opt/zimbra/bin/zmstorectl",
+	"zimlet" => "/opt/zimbra/bin/zmstorectl",
+	"logger" => "/opt/zimbra/bin/zmloggerctl", 
+	"snmp" => "/opt/zimbra/bin/zmswatchctl", 
+	"ldap" => "/opt/zimbra/bin/ldap",
+	"spell" => "/opt/zimbra/bin/zmspellctl",
+	"memcached" => "/opt/zimbra/bin/zmmemcachedctl",
+	"proxy" => "/opt/zimbra/bin/zmproxyctl",
+	"stats" => "/opt/zimbra/bin/zmstatctl",
+	"zmconfigd" => "/opt/zimbra/bin/zmconfigdctl",
+	"cbpolicyd" => "/opt/zimbra/bin/zmcbpolicydctl",
+	"vmware-ha" => "/opt/zimbra/bin/zmhactl",
+);
+
+my %rewrites = ( 
+	"antivirus" => "antivirus amavis",
+	"antispam" => "antispam amavis",
+	"archiving" => "archiving amavis",
+	"opendkim" => "opendkim",
+	"mta" => "amavis antispam antivirus opendkim mta sasl",
+	"mailbox" => "webxml mailbox",
+	"proxy" => "proxy",
+	"dnscache" => "dnscache",
+);
+
+my %GlobalOpts = ();
+
+my %DESC = (
+	"start" => "Start services",
+	"startup" => "Start services",
+	"stop" => "Stop services",
+	"shutdown" => "Stop services",
+	"restart" => "Restart services",
+	#"maintenance" => "Toggle maintenance mode",
+	"status" => "Display service status",
+);
+
+my %COMMANDS = (
+	"start" => \&doStartup,
+	"startup" => \&doStartup,
+	"stop" => \&doShutdown,
+	"shutdown" => \&doShutdown,
+	"restart" => \&doRestart,
+	#"maintenance" => \&setMaintenanceMode,
+	"status" => \&doStatus,
+);
+
+my %REMOTECOMMANDS = (
+	"start" => "startup",
+	"startup" => "startup",
+	"stop" => "shutdown",
+	"shutdown" => "shutdown",
+	"restart" => "restart",
+	#"maintenance" => "maintenance",
+	"status" => "status",
+);
+
+
+$| = 1;
+
+unless ( getopts( 'vhH:', \%GlobalOpts ) ) { usage(); }
+
+if ( ! $GlobalOpts{H} ) { $GlobalOpts{H} = $localHostName; chomp $GlobalOpts{H}; }
+
+if ( $GlobalOpts{h} ) { usage(); }
+if ( $GlobalOpts{v} ) { displayVersion(); exit 0;}
+
+# Commands: start, stop, restart and status
+my $command = $ARGV[0];
+
+unless (defined ($COMMANDS{$command})) {usage();}
+
+if ($GlobalOpts{H} ne $localHostName) {
+	exit (runRemoteCommand ($command));
+}
+
+exit (&{$COMMANDS{$command}}($ARGV[1]));
+
+#
+# Functions
+#
+sub runRemoteCommand {
+	my $cmd = shift;
+	my $cstr = "HOST:$GlobalOpts{H} $REMOTECOMMANDS{$cmd}";
+
+	open (REMOTE, "echo $cstr | /opt/zimbra/libexec/zmrc $GlobalOpts{H} |") or 
+		die "Can't contact $GlobalOpts{H}";
+
+	while (<REMOTE>) {
+		if (/^STARTCMD: (\S+) .*/) {
+			#print "Host $1 starting\n";
+		} elsif (/^ENDCMD: (\S+) .*/) {
+			print "Host $1 complete\n";
+			exit; # Since the pipe doesn't always like to close...
+		} else {
+			print "$_";
+		}
+	}
+	close REMOTE;
+}
+
+sub doStatus {
+	$services = getEnabledServices();
+	getServiceStatusList();
+	alarm($timeout);
+	my (undef, $statusfile) = tempfile("zmcontrol.status.XXXXX", DIR=>"$zimbra_tmp_directory",  OPEN=>0);
+	my (undef, $errfile) = tempfile("zmcontrol.error.XXXXX", DIR=>"$zimbra_tmp_directory",  OPEN=>0);
+	if (scalar(keys %$services) == 0) {
+		print "Cannot determine services - exiting\n";
+		return 1;
+	}
+	my $status = 0;
+	print "Host $localHostName\n";
+	foreach (sort keys %{$services}) {
+		my $rc = 0xffff & system ("$allservices{$_} status > $statusfile 2> $errfile");
+		$rc = $rc >> 8;
+		if ($rc) {
+			# this is an any ugly hack for 11266
+			$status = 3 if ($serviceStatusList{$_});
+		}
+		my $stat;
+		if ($_ eq "service" || $_ eq "zimbra" || $_ eq "zimbraAdmin" || $_ eq "zimlet") {
+			my $bit = "$_ webapp";
+			$stat = sprintf "\t%-20s %10s\n",$bit,($rc)?"Stopped":"Running";
+		} else {
+			$stat = sprintf "\t%-20s %10s\n",$_,($rc)?"Stopped":"Running";
+		}
+		print "$stat";
+		if ($rc) {
+			open (ST, "$statusfile") or next;
+			foreach my $s (<ST>) {
+				print "\t\t$s";
+			}
+			close ST;
+		}
+	}
+	unlink($statusfile);
+	unlink($errfile);
+	alarm(0);
+	return $status;
+}
+
+sub startLdap {
+	print "\tStarting ldap...";
+	my $rc = 0xffff & system("/opt/zimbra/bin/ldap start > $zmcontrolLogfile 2>&1");
+	$rc = $rc >> 8;
+	print "Done.\n";
+	return $rc;
+}
+
+sub doRewrite {
+	my $rew = "";
+	foreach (@_) {
+		$rew .= " $rewrites{$_}";
+	}
+	Zimbra::Mon::Logger::Log ("info", "Rewriting configs $rew");
+	my $rc = 0xffff & system("/opt/zimbra/libexec/configrewrite $rew > $zmcontrolLogfile 2>&1");
+	$rc = $rc >> 8;
+	return $rc;
+}
+
+sub doRestart {
+  &doShutdown;
+  &doStartup;
+}
+
+sub doStartup {
+	Zimbra::Mon::Logger::Log ("info", "Starting services initiated by zmcontrol");
+	print "Host $localHostName\n";
+	my $rc = 0;
+	my $rrc = 0;
+	if ($ldapHere) {
+		my $ldapStopped = 0xffff & system("/opt/zimbra/bin/ldap status > /dev/null 2>&1");
+		if ($ldapStopped) {
+			$rrc = startLdap();
+		}
+	}
+	if ($rrc) {
+		$rc = 1;
+		my $out = qx(cat $zmcontrolLogfile);
+		print "Failed.\n";
+		print "$out\n\n";
+		exit (1);
+	}
+	unlink($zmcontrolLogfile);
+	$services = getEnabledServices();
+	if (scalar(keys %$services) == 0) {
+		return 1;
+	}
+	if (defined ($$services{"ldap"}) ) {
+		my $ldapStopped = 0xffff & system("/opt/zimbra/bin/ldap status > /dev/null 2>&1");
+		if ($ldapStopped) {
+			$rrc = startLdap();
+			sleep 3;
+		}
+	}
+	if ($rrc) {
+		$rc = 1;
+		my $out = qx(cat $zmcontrolLogfile);
+		print "Failed.\n";
+		print "$out\n\n";
+		exit (1);
+	}
+
+	checkAvailableSpace();
+	foreach (sort {$startorder{$a} <=> $startorder{$b}} keys %{$services}) {
+		if ($_ eq "ldap") {next;}
+		checkAvailableServiceSpace($_);
+		Zimbra::Mon::Logger::Log ("info", "Starting $_ via zmcontrol");
+		if ($_ eq "service" || $_ eq "zimbra" || $_ eq "zimbraAdmin" || $_ eq "zimlet") {
+			print "\tStarting $_ webapp...";
+		} else {
+			print "\tStarting $_...";
+		}
+		unless (-x "$allservices{$_}") {
+			print "skipped.\n\t\t$allservices{$_} missing or not executable.\n";
+			next;
+		}
+		$rrc = 0xffff & system ("$allservices{$_} start norewrite > $zmcontrolLogfile 2>&1");
+		$rrc = $rrc >> 8;
+		if ($rrc) {
+			$rc = 1;
+			my $out = qx(cat $zmcontrolLogfile);
+			print "Failed.\n";
+			print "$out\n\n";
+		} else {
+			print "Done.\n";
+		}
+		unlink($zmcontrolLogfile);
+	}
+	return $rc;
+}
+
+sub doShutdown {
+	Zimbra::Mon::Logger::Log ("info", "Stopping services initiated by zmcontrol");
+	print "Host $localHostName\n";
+	my $rc = 0;
+	my $rrc = 0;
+	foreach (sort {$stoporder{$b} <=> $stoporder{$a}} keys %allservices) {
+		Zimbra::Mon::Logger::Log ("info", "Stopping $_ via zmcontrol");
+		if ($_ eq "ldap" && !(-d "/opt/zimbra/openldap/sbin") ) { next; }
+		if ($_ eq "mta" && !(-d "/opt/zimbra/postfix/libexec") ) { next; }
+		if ($_ eq "snmp" && !(-f "/opt/zimbra/bin/zmswatchctl") ) { next; }
+		if ($_ eq "mailbox" && !(-d "/opt/zimbra/db/data") ) { next; }
+		if ($_ eq "convertd" && !(-l "/opt/zimbra/keyview") ) { next; }
+		if ($_ eq "service" || $_ eq "zimbra" || $_ eq "zimbraAdmin" || $_ eq "zimlet") {
+			print "\tStopping $_ webapp...";
+		} else {
+			print "\tStopping $_...";
+		}
+		unless (-x "$allservices{$_}") {
+			print "skipped.\n\t\t$allservices{$_} missing or not executable.\n";
+			next;
+		}
+		$rrc = 0xffff & system ("$allservices{$_} stop > $zmcontrolLogfile 2>&1");
+		$rrc = $rrc >> 8;
+		if ($rrc) {
+			$rc = 1;
+			my $out = qx(cat $zmcontrolLogfile);
+			print "Failed.\n";
+			print "$out\n\n";
+		} else {
+			print "Done.\n";
+		}
+		unlink($zmcontrolLogfile);
+	}
+	return $rc;
+}
+
+sub setMaintenanceMode {
+	my $mode = shift;
+}
+
+sub getServiceStatusList {
+  my @services = split(/\s+/, getLocalConfig("zmcontrol_service_status_list"));
+  @services = grep(!/stats|snmp|logger|spell/, keys %allservices) if (scalar @services < 1);
+  if (scalar @services > 1) {
+    foreach my $service (@services) {
+      $serviceStatusList{$service} = 1
+        if (defined($allservices{$service}));
+    }
+  }
+}
+    
+
+sub getLocalConfig {
+	my $key = shift;
+	if (defined ($ENV{zmsetvars})) {
+		return $ENV{$key};
+	}
+	open CONF, "/opt/zimbra/bin/zmlocalconfig -x -s -q -m shell |" or
+		die "Can't open zmlocalconfig: $!";
+	my @conf = <CONF>;
+	close CONF;
+
+	chomp @conf;
+
+	foreach (@conf) {
+		my ($key, $val) = split '=', $_, 2;
+		$val =~ s/;$//;
+		$val =~ s/'$//;
+		$val =~ s/^'//;
+		$ENV{$key} = $val;
+	}
+	$ENV{zmsetvars} = 'true';
+	return $ENV{$key};
+}
+
+sub getCachedServices {
+  my %s = ();
+  $s{"zmconfigd"} = "zmconfigd";
+  if (-f $cache_file && -M $cache_file <= 1) {
+    open(CACHE, "<$cache_file");
+    my @lines = <CACHE>;
+    close CACHE;
+    foreach (@lines) {
+      chomp;
+      $s{$_} = $_;
+    }
+  } else {
+    print "Unable to determine enabled services. Cache is out of date or doesn't exist.\n"; 
+    exit 1;
+  }
+  warn "Enabled services read from cache. Service list may be inaccurate.\n"
+    if (scalar keys %s > 0 );
+  return \%s;
+}
+
+sub getEnabledServices {
+  my $ldap_master_url=getLocalConfig("ldap_master_url");
+  my $ldap_dn=getLocalConfig("zimbra_ldap_userdn");
+  my $ldap_pass=getLocalConfig("zimbra_ldap_password");
+  
+  my %s = ();
+  $s{"zmconfigd"} = "zmconfigd";
+
+  my @ldap_masters=split(/ /, $ldap_master_url);
+  my $master_ref=\@ldap_masters;
+  my ($ldap, $result);
+  unless ($ldap = Net::LDAP->new( $master_ref, timeout =>30 )) {
+    warn "Connect: Unable to determine enabled services from ldap.\n";
+    return getCachedServices();
+  }
+  unless ($result = $ldap->bind($ldap_dn, password => $ldap_pass)) {
+    warn "Bind: Unable to determine enabled services from ldap.\n";
+    return getCachedServices();
+  }
+  $result = $ldap->search(base => "cn=servers,cn=zimbra", filter => "cn=$localHostName", attrs => ['zimbraServiceEnabled']);
+  if ($result->code) {
+    warn "Search error: Unable to determine enabled services from ldap.\n";
+    return getCachedServices();
+  }
+  my $size = $result->count;
+  if($size != 1) {
+    warn "Size error: Unable to determine enabled services from ldap.\n";
+    return getCachedServices();
+  }
+  my $entry = $result->entry(0); 
+  foreach my $value ($entry->get_value('zimbraServiceEnabled')) {
+    $s{$value} = $value;
+  }
+  $result = $ldap->unbind;
+
+  if (scalar keys %s > 0) {
+    open (CACHE, ">$cache_file");
+    foreach my $service (keys %s) {
+      print CACHE "$service\n";
+    }
+    close(CACHE);
+  }
+  return \%s;
+}
+
+sub isLdapLocal {
+  return((index(getLocalConfig("ldap_url"), "/".getLocalConfig("zimbra_server_hostname")) != -1) ? 1 : 0);
+}
+
+sub getHostName {
+	return (getLocalConfig("zimbra_server_hostname"));
+}
+
+sub displayVersion {
+	my $platform = qx(/opt/zimbra/libexec/get_plat_tag.sh);
+	chomp $platform;
+	my $string = "";
+	if ($platform =~ /MACOSX/) {
+		my $release;
+		if (-x "/usr/sbin/pkgutil") {
+			$release=qx(/usr/sbin/pkgutil --pkg-info com.zimbra.zcs.core  2> /dev/null | grep ^version | awk '{print \$NF}');
+		} else {
+			$release=qx(grep -C1 CFBundleGetInfoString /Library/Receipts/zimbra-core.pkg/Contents/Info.plist | tail -1 | sed -e 's/\<[^>]*\>//g' -e 's/^ *//g' | awk -F, '{print $1}');
+		}
+		chomp($release);
+		$string = "Release $release $platform";
+	} elsif ($platform =~ /DEBIAN/ || $platform =~ /UBUNTU/) {
+		my $release = qx(dpkg -s zimbra-core | egrep '^Version:' | sed -e 's/Version: //');
+		chomp $release;
+		if ( -x "/opt/vmware/bin/vamicli") {
+			my $appliance_version=qx(/opt/vmware/bin/vamicli version --appliance | awk '{if ((\$1 ~ /Version/) && (\$2 ~ /-/)) { print \$3} }' 2> /dev/null);
+			chomp($appliance_version);
+			$string = "ZCA Release $appliance_version\n";
+			$string .= "ZCS Build $release";
+		} else {
+			$string = "Release $release $platform";
+		}
+	} else {
+		my $release = qx(rpm -q --queryformat "%{version}_%{release}" zimbra-core);
+		my $inst = localtime (qx(rpm -q --queryformat "%{installtime}" zimbra-core));
+		$string = "Release $release $platform";
+	}
+
+  $string .=  ((-f "/opt/zimbra/bin/zmbackupquery") ? " NETWORK" : " FOSS"); 
+  $string .= " edition";
+
+  my $patch = "";
+  if (open(HIST_FILE, "/opt/zimbra/.install_history")) {
+    my $hline;
+    while ($hline = <HIST_FILE>) {
+      my $entry;
+  
+      chomp($hline);
+      (undef, $entry) = split(': ', $hline);
+      if ($entry =~ /CONFIGURED patch/) {
+        $patch = substr($entry, 16)
+      }
+      if ($entry =~ /INSTALL SESSION START/) {
+        $patch = "";
+      }
+    }
+    close(HIST_FILE);
+  }
+  if ($patch ne "") {
+    $string .= ", Patch $patch";
+  }
+
+	print "$string.\n";
+}
+
+sub checkAvailableSpace {
+  my ($service) = @_;
+
+  my @dirs = ("/opt/zimbra");
+  foreach my $dir (@dirs) {
+    if (-e "$dir") {
+      print "\tWARNING: Disk space below threshold for $dir.\n"
+        unless hasAvailableSpace($dir);
+    }
+  }
+}
+sub checkAvailableServiceSpace {
+  my ($service) = @_;
+
+  my %serviceDirs = ( 
+    mailbox => ["/opt/zimbra/store", "/opt/zimbra/db", "/opt/zimbra/index", "/opt/zimbra/redolog"],
+    logger => ["/opt/zimbra/logger/db"],
+    mta => ["/opt/zimbra/data/postfix/spool"]
+  );  
+  my @dirs = ();
+  @dirs = (@dirs, @{$serviceDirs{$service}})
+    if (defined $serviceDirs{$service});
+  foreach my $dir (@dirs) {
+    if (-e "$dir") {
+      print "\tWARNING: Disk space below threshold for $dir.\n"
+        unless hasAvailableSpace($dir);
+    }
+  }
+}
+
+sub hasAvailableSpace() {
+  my ($dir,$freeMbytes) = @_;
+    return undef unless (-e "$dir");
+  $freeMbytes = getLocalConfig("zimbra_disk_threshold") || 100
+    unless $freeMbytes;
+  my $platform=qx(/opt/zimbra/libexec/get_plat_tag.sh);
+  chomp $platform;
+
+  my $DFCMD = ($platform =~ /MACOSX/ ? "df -ml " : "df -mlP ");
+
+  open DF, "$DFCMD $dir | tail -1 |" or die "Can't open $DFCMD: $!";
+  my @df = <DF>;
+  close DF;
+  my ($device, $total, undef, $avail) = split(/\s+/, $df[0]);
+  return 1 if (defined($devicesChecked{$device})); 
+  $devicesChecked{$device} = $avail;
+  if ($avail < $freeMbytes) { 
+	  Zimbra::Mon::Logger::Log ("info", "Availble disk space on $dir is below threshold of $freeMbytes.  $avail Mbytes available.");
+  }
+
+  return ($avail > $freeMbytes) ? 1 : undef;
+}
+
+sub usage {
+	displayVersion();
+	print "$0 [-v -h -H <host>] command [args]\n";
+	print "\n";
+	print "\t-v:	display version\n";
+	print "\t-h:	print usage statement\n";
+	print "\t-H:	Host name (localhost)\n";
+	print "\n";
+	print "\tCommand in:\n";
+	foreach ( sort keys %COMMANDS ) {
+		print "\t\t" . sprintf( "%-20s%30s", $_, $DESC{$_} ) ."\n";
+	}
+
+	print "\n";
+	exit 1;
+}
