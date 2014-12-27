@@ -1,0 +1,35 @@
+<?xml version="1.0"?>
+<crm_mon version="1.1.10-32.el7_0.1">
+    <summary>
+        <last_update time="Sat Dec 27 10:41:47 2014" />
+        <last_change time="Sat Dec 27 09:58:27 2014" user="" client="crmd" origin="node2" />
+        <stack type="corosync" />
+        <current_dc present="true" version="1.1.10-32.el7_0.1-368c726" name="node1" id="1" with_quorum="true" />
+        <nodes_configured number="2" expected_votes="unknown" />
+        <resources_configured number="5" />
+    </summary>
+    <nodes>
+        <node name="node1" id="1" online="true" standby="false" standby_onfail="false" maintenance="false" pending="false" unclean="false" shutdown="false" expected_up="true" is_dc="true" resources_running="4" type="member" />
+        <node name="node2" id="2" online="true" standby="false" standby_onfail="false" maintenance="false" pending="false" unclean="false" shutdown="false" expected_up="true" is_dc="false" resources_running="1" type="member" />
+    </nodes>
+    <resources>
+        <resource id="ClusterIP" resource_agent="ocf::heartbeat:IPaddr2" role="Started" active="true" orphaned="false" managed="true" failed="false" failure_ignored="false" nodes_running_on="1" >
+            <node name="node1" id="1" cached="false"/>
+        </resource>
+        <clone id="ZimbraDataClone" multi_state="true" unique="false" managed="true" failed="false" failure_ignored="false" >
+            <resource id="ZimbraData" resource_agent="ocf::linbit:drbd" role="Master" active="true" orphaned="false" managed="true" failed="false" failure_ignored="false" nodes_running_on="1" >
+                <node name="node1" id="1" cached="false"/>
+            </resource>
+            <resource id="ZimbraData" resource_agent="ocf::linbit:drbd" role="Slave" active="true" orphaned="false" managed="true" failed="false" failure_ignored="false" nodes_running_on="1" >
+                <node name="node2" id="2" cached="false"/>
+            </resource>
+        </clone>
+        <resource id="ZimbraFS" resource_agent="ocf::heartbeat:Filesystem" role="Started" active="true" orphaned="false" managed="true" failed="false" failure_ignored="false" nodes_running_on="1" >
+            <node name="node1" id="1" cached="false"/>
+        </resource>
+        <resource id="Zimbra" resource_agent="lsb:zimbra" role="Started" active="true" orphaned="false" managed="true" failed="false" failure_ignored="false" nodes_running_on="1" >
+            <node name="node1" id="1" cached="false"/>
+        </resource>
+    </resources>
+</crm_mon>
+
