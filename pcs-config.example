@@ -1,0 +1,56 @@
+Cluster Name: myclustering
+Corosync Nodes:
+ node1 node2 
+Pacemaker Nodes:
+ node1 node2 
+
+Resources: 
+ Resource: ClusterIP (class=ocf provider=heartbeat type=IPaddr2)
+  Attributes: ip=192.168.122.76 cidr_netmask=24 
+  Operations: start interval=0s timeout=20s (ClusterIP-start-timeout-20s)
+              stop interval=0s timeout=20s (ClusterIP-stop-timeout-20s)
+              monitor interval=30s (ClusterIP-monitor-interval-30s)
+ Master: ZimbraDataClone
+  Meta Attrs: master-max=1 master-node-max=1 clone-max=2 clone-node-max=1 notify=true 
+  Resource: ZimbraData (class=ocf provider=linbit type=drbd)
+   Attributes: drbd_resource=zimbradata 
+   Operations: start interval=0s timeout=240 (ZimbraData-start-timeout-240)
+               promote interval=0s timeout=90 (ZimbraData-promote-timeout-90)
+               demote interval=0s timeout=90 (ZimbraData-demote-timeout-90)
+               stop interval=0s timeout=100 (ZimbraData-stop-timeout-100)
+               monitor interval=60s (ZimbraData-monitor-interval-60s)
+ Resource: ZimbraFS (class=ocf provider=heartbeat type=Filesystem)
+  Attributes: device=/dev/drbd/by-res/zimbradata directory=/opt fstype=ext4 
+  Operations: start interval=0s timeout=60 (ZimbraFS-start-timeout-60)
+              stop interval=0s timeout=60 (ZimbraFS-stop-timeout-60)
+              monitor interval=20 timeout=40 (ZimbraFS-monitor-interval-20)
+ Resource: Zimbra (class=lsb type=zimbra)
+  Operations: monitor interval=30 timeout=5min (Zimbra-monitor-interval-30-timeout-5min)
+              start interval=0 timeout=5min (Zimbra-start-interval-0-timeout-5min)
+              stop interval=0 timeout=5min (Zimbra-stop-interval-0-timeout-5min)
+
+Stonith Devices: 
+Fencing Levels: 
+
+Location Constraints:
+  Resource: ClusterIP
+    Enabled on: node2 (score:INFINITY) (role: Started) (id:cli-prefer-ClusterIP)
+  Resource: Zimbra
+    Enabled on: node2 (score:INFINITY) (role: Started) (id:cli-prefer-Zimbra)
+  Resource: ZimbraFS
+    Enabled on: node1 (score:INFINITY) (role: Started) (id:cli-prefer-ZimbraFS)
+Ordering Constraints:
+  promote ZimbraDataClone then start ZimbraFS (Mandatory) (id:order-ZimbraDataClone-ZimbraFS-mandatory)
+  start ZimbraFS then start ClusterIP (Mandatory) (id:order-ZimbraFS-ClusterIP-mandatory)
+  start ClusterIP then start Zimbra (Mandatory) (id:order-ClusterIP-Zimbra-mandatory)
+Colocation Constraints:
+  ZimbraFS with ZimbraDataClone (INFINITY) (with-rsc-role:Master) (id:colocation-ZimbraFS-ZimbraDataClone-INFINITY)
+  Zimbra with ClusterIP (INFINITY) (id:colocation-Zimbra-ClusterIP-INFINITY)
+  ClusterIP with ZimbraFS (INFINITY) (id:colocation-ClusterIP-ZimbraFS-INFINITY)
+
+Cluster Properties:
+ cluster-infrastructure: corosync
+ dc-version: 1.1.10-32.el7_0.1-368c726
+ last-lrm-refresh: 1419649107
+ no-quorum-policy: ignore
+ stonith-enabled: false
