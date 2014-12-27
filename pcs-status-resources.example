@@ -1,0 +1,6 @@
+ ClusterIP	(ocf::heartbeat:IPaddr2):	Started 
+ Master/Slave Set: ZimbraDataClone [ZimbraData]
+     Masters: [ node1 ]
+     Slaves: [ node2 ]
+ ZimbraFS	(ocf::heartbeat:Filesystem):	Started 
+ Zimbra	(lsb:zimbra):	Started 
