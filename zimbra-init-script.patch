@@ -65,8 +65,12 @@ case "$1" in
     fi
 		;;
 	reload|status)
-		command $1
-		RETVAL=$?
+		if [ -f /opt/zimbra/bin/zmcontrol ]; then
+			command $1
+			RETVAL=$?
+		else
+			RETVAL=3
+		fi
 		;;
 	*)
 		echo $"Usage: $0 {start|stop|restart|reload|status}"
