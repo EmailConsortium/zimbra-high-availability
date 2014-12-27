@@ -1,0 +1,15 @@
+resource zimbradata {
+meta-disk internal;
+device /dev/drbd1;
+syncer {
+verify-alg sha1;
+}
+on node1.testdomain6.com {
+disk /dev/mapper/VolGroup00-Zimbra;
+address 192.168.122.74:7789;
+}
+on node2.testdomain6.com {
+disk /dev/mapper/VolGroup00-Zimbra;
+address 192.168.122.75:7789;
+}
+}
