@@ -1,17 +1,79 @@
---- /etc/init.d/zimbra.bak      2012-07-30 14:33:11.070218088 +0700
-+++ /etc/init.d/zimbra  2012-07-28 15:12:34.361981866 +0700
-@@ -62,8 +62,12 @@
-     fi
-                ;;
-        reload|status)
--               command $1
--               RETVAL=$?
-+                if [ -f /opt/zimbra/bin/zmcontrol ]; then
-+                       command $1
-+                       RETVAL=$?
-+                else
-+                        RETVAL=3
-+                fi
-                ;;
-        *)
-                echo $"Usage: $0 {start|stop|restart|reload|status}"
+#!/bin/bash
+# 
+# ***** BEGIN LICENSE BLOCK *****
+# Zimbra Collaboration Suite Server
+# Copyright (C) 2005, 2006, 2007, 2009, 2010, 2013, 2014 Zimbra, Inc.
+# 
+# This program is free software: you can redistribute it and/or modify it under
+# the terms of the GNU General Public License as published by the Free Software Foundation,
+# version 2 of the License.
+# 
+# This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+# without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+# See the GNU General Public License for more details.
+# You should have received a copy of the GNU General Public License along with this program.
+# If not, see <http://www.gnu.org/licenses/>.
+# ***** END LICENSE BLOCK *****
+# 
+#
+# Init file for zimbra mail
+#
+# chkconfig: 345 99 01
+# description: Zimbra mail service
+#
+### BEGIN INIT INFO
+# Provides:       zimbra
+# Required-Start: $network $remote_fs $syslog $time nscd cron
+# Required-Stop:  $network $remote_fs $syslog $time
+# Default-Start:  3 5
+# Default-Stop:   0 1 6
+# Description:    Zimbra mail service
+### END INIT INFO
+
+
+command()
+{
+	if [ -f /opt/zimbra/redolog/redo.log ]; then
+		chown -f zimbra:zimbra /opt/zimbra/redolog/redo.log
+	fi
+	# su - zimbra -c "zmcontrol $1 </dev/null >>/opt/zimbra/log/startup.log 2>&1"
+	# bug 45842
+	su - zimbra -c "zmcontrol $1 </dev/null"
+}
+
+case "$1" in
+	restart)
+		command shutdown
+		command startup
+		RETVAL=$?
+    if [ -d /var/lock/subsys -a $RETVAL -eq 0 ]; then
+      touch /var/lock/subsys/zimbra
+    fi
+		;;
+	start)
+		command startup
+		RETVAL=$?
+    if [ -d /var/lock/subsys -a $RETVAL -eq 0 ]; then
+      touch /var/lock/subsys/zimbra
+    fi
+		;;
+	stop)
+		command shutdown
+		RETVAL=$?
+    if [ -d /var/lock/subsys -a $RETVAL -eq 0 ]; then
+      rm -f /var/lock/subsys/zimbra
+    fi
+		;;
+	reload|status)
+		if [ -f /opt/zimbra/bin/zmcontrol ]; then
+			command $1
+			RETVAL=$?
+		else
+			RETVAL=3
+		fi
+		;;
+	*)
+		echo $"Usage: $0 {start|stop|restart|reload|status}"
+		RETVAL=1
+esac
+exit $RETVAL
